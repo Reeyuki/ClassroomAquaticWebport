@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classroom Aquatic</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #000000;
+        overflow: hidden;
+      }
+      #gameContainer {
+        width: 100vw;
+        height: 100vh;
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+      #loadingOverlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #000000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #ffffff;
+        font-family: Arial, sans-serif;
+        z-index: 10;
+      }
+      #loadingText {
+        font-size: 18px;
+        margin-bottom: 10px;
+      }
+      #loadingPercent {
+        font-size: 32px;
+        font-weight: bold;
+      }
+      #fullscreenBtn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 20;
+        background: rgba(40, 40, 40, 0.8);
+        color: #ffffff;
+        border: 1px solid #666666;
+        padding: 8px 12px;
+        cursor: pointer;
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+      }
+      #fullscreenBtn:hover {
+        background: rgba(60, 60, 60, 0.9);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loadingOverlay">
+      <div id="loadingText">Loading</div>
+      <div id="loadingPercent">0%</div>
+    </div>
+    <button id="fullscreenBtn" onclick="toggleFullscreen()">Fullscreen</button>
+    <div id="gameContainer"></div>
+    <script src="Build/UnityLoader.js"></script>
+    <script>
+      var assetBaseUrl = "https://fastly.jsdelivr.net/gh/reeyuki/classroom-aquatic@main/";
+      var buildPath = "Build/";
+
+      var assetConfig = [
+        { name: "game.data.unityweb", count: 3 },
+        { name: "game.asm.code.unityweb", count: 2 }
+      ];
+
+      var blobUrls = {};
+      var totalBytesExpected = 0;
+      var loadedBytes = 0;
+
+      function updateLoading() {
+        var pct = totalBytesExpected > 0 ? Math.floor((loadedBytes / totalBytesExpected) * 100) : 0;
+        if (pct > 100) pct = 100;
+        document.getElementById("loadingPercent").textContent = pct + "%";
+      }
+
+      var originalFetch = window.fetch;
+      window.fetch = function(input, init) {
+        var url = typeof input === "string" ? input : (input && input.url ? input.url : "");
+        for (var i = 0; i < assetConfig.length; i++) {
+          if (url.indexOf(assetConfig[i].name) !== -1 && blobUrls[assetConfig[i].name]) {
+            return originalFetch(blobUrls[assetConfig[i].name], init);
+          }
+        }
+        return originalFetch.apply(this, arguments);
+      };
+
+      var OriginalXHR = window.XMLHttpRequest;
+      window.XMLHttpRequest = function() {
+        var xhr = new OriginalXHR();
+        var origOpen = xhr.open;
+        var origSend = xhr.send;
+        var targetKey = null;
+        var targetUrl = null;
+        xhr.open = function(method, url) {
+          targetUrl = url;
+          for (var i = 0; i < assetConfig.length; i++) {
+            if (url.indexOf(assetConfig[i].name) !== -1) {
+              targetKey = assetConfig[i].name;
+              break;
+            }
+          }
+          if (targetKey && blobUrls[targetKey]) {
+            return origOpen.call(this, method, blobUrls[targetKey]);
+          }
+          return origOpen.apply(this, arguments);
+        };
+        xhr.send = function(body) {
+          if (targetKey && blobUrls[targetKey]) {
+            return origSend.apply(this, arguments);
+          }
+          return origSend.apply(this, arguments);
+        };
+        return xhr;
+      };
+
+      function toggleFullscreen() {
+        var elem = document.documentElement;
+        if (!document.fullscreenElement) {
+          elem.requestFullscreen();
+        } else {
+          document.exitFullscreen();
+        }
+      }
+
+      function startReconstruction() {
+        var allPromises = [];
+        for (var a = 0; a < assetConfig.length; a++) {
+          (function(asset) {
+            var chunks = new Array(asset.count);
+            var chunkPromises = [];
+            for (var c = 0; c < asset.count; c++) {
+              (function(idx) {
+                var chunkName = asset.name + (idx < 10 ? "0" + idx : String(idx));
+                var url = assetBaseUrl + buildPath + chunkName;
+                var p = fetch(url).then(function(r) { return r.arrayBuffer(); }).then(function(buf) {
+                  chunks[idx] = buf;
+                  loadedBytes += buf.byteLength;
+                  updateLoading();
+                });
+                chunkPromises.push(p);
+              })(c);
+            }
+            var assetPromise = Promise.all(chunkPromises).then(function() {
+              var totalLen = 0;
+              for (var j = 0; j < chunks.length; j++) {
+                if (chunks[j]) totalLen += chunks[j].byteLength;
+              }
+              var combined = new Uint8Array(totalLen);
+              var offset = 0;
+              for (var j = 0; j < chunks.length; j++) {
+                if (chunks[j]) {
+                  combined.set(new Uint8Array(chunks[j]), offset);
+                  offset += chunks[j].byteLength;
+                }
+              }
+              var blob = new Blob([combined.buffer], { type: "application/octet-stream" });
+              blobUrls[asset.name] = URL.createObjectURL(blob);
+            });
+            allPromises.push(assetPromise);
+          })(assetConfig[a]);
+        }
+        Promise.all(allPromises).then(function() {
+          document.getElementById("loadingText").textContent = "Starting";
+          document.getElementById("loadingPercent").textContent = "100%";
+          try {
+            var gameInstance = UnityLoader.instantiate("gameContainer", "Build/game.json", {});
+          } catch (e) {}
+          setTimeout(function() {
+            var overlay = document.getElementById("loadingOverlay");
+            if (overlay) overlay.style.display = "none";
+          }, 1500);
+        });
+      }
+
+      totalBytesExpected = 45000000 + 25000000;
+      startReconstruction();
+    </script>
+  </body>
+</html>
